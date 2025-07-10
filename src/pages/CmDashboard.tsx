@@ -44,32 +44,28 @@ const CmDashboard: React.FC = () => {
 
   const { instance, accounts } = useMsal();
 
-  async function getAccessToken() {
-    if (accounts.length === 0) {
-      await instance.loginPopup(); // or loginRedirect
-    }
-    const result = await instance.acquireTokenSilent({
-      scopes: ["api://5855622d-af7e-43ca-9266-67919b68fe4a/.default"],
-      account: accounts[0]
-    });
-    return result.accessToken;
-  }
-
   // Fetch CM codes from API
   useEffect(() => {
     const fetchCmCodes = async () => {
       try {
         setLoading(true);
-        const token = await getAccessToken();
+        setError(null);
+        
+        console.log('Making API call to:', 'http://localhost:3000/cm-codes');
+        
         const response = await fetch('http://localhost:3000/cm-codes', {
           headers: {
-            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         });
         
+        console.log('Response status:', response.status);
+        console.log('Response headers:', response.headers);
+        
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          const errorText = await response.text();
+          console.error('API Error Response:', errorText);
+          throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
         }
         
         const result: ApiResponse = await response.json();
@@ -89,8 +85,20 @@ const CmDashboard: React.FC = () => {
           throw new Error('API returned unsuccessful response');
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch CM codes');
         console.error('Error fetching CM codes:', err);
+        
+        // Provide more specific error messages
+        if (err instanceof Error) {
+          if (err.message.includes('Failed to fetch')) {
+            setError('Backend server is not running. Please start the backend on port 3000.');
+          } else if (err.message.includes('401')) {
+            setError('Authentication failed. Please check if the backend is configured to accept requests.');
+          } else {
+            setError(err.message);
+          }
+        } else {
+          setError('Failed to fetch CM codes');
+        }
       } finally {
         setLoading(false);
       }
@@ -136,10 +144,8 @@ const CmDashboard: React.FC = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const token = await getAccessToken();
         const response = await fetch('http://localhost:3000/cm-codes', {
           headers: {
-            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         });

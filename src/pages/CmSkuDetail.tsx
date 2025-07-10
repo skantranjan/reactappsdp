@@ -5,7 +5,7 @@ import Loader from '../components/Loader';
 import ConfirmModal from '../components/ConfirmModal';
 import MultiSelect from '../components/MultiSelect';
 import { Collapse } from 'react-collapse';
-import { useMsal } from '@azure/msal-react';
+import * as XLSX from 'xlsx';
 
 // Interface for SKU data structure
 interface SkuData {
@@ -86,6 +86,13 @@ type AddComponentData = {
   componentDimensions: string;
 };
 
+// Add this helper for info icon
+const InfoIcon = ({ info }: { info: string }) => (
+  <span style={{ marginLeft: 6, cursor: 'pointer', color: '#888' }} title={info}>
+    <i className="ri-information-line" style={{ fontSize: 16, verticalAlign: 'middle' }} />
+  </span>
+);
+
 const CmSkuDetail: React.FC = () => {
   const { cmCode } = useParams();
   const location = useLocation();
@@ -145,29 +152,14 @@ const CmSkuDetail: React.FC = () => {
     setOpenIndex(0);
   };
 
-  const { instance, accounts } = useMsal();
-
-  async function getAccessToken() {
-    if (accounts.length === 0) {
-      await instance.loginPopup(); // or loginRedirect
-    }
-    const result = await instance.acquireTokenSilent({
-      scopes: ["api://5855622d-af7e-43ca-9266-67919b68fe4a/.default"],
-      account: accounts[0]
-    });
-    return result.accessToken;
-  }
-
   // Expose fetchSkuDetails for use after add/edit
   const fetchSkuDetails = async () => {
     if (!cmCode) return;
     try {
       setLoading(true);
       setError(null);
-      const token = await getAccessToken();
       const response = await fetch(`http://localhost:3000/sku-details/${cmCode}`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -231,21 +223,47 @@ const CmSkuDetail: React.FC = () => {
     fetchDescriptions();
   }, []);
 
+  // Add state for material types
+  const [materialTypes, setMaterialTypes] = useState<Array<{id: number, item_name: string, item_order: number, is_active: boolean, created_by: string, created_date: string}>>([]);
+
+  // Fetch material types from API
+  useEffect(() => {
+    const fetchMaterialTypes = async () => {
+      try {
+        const response = await fetch('http://localhost:3000/material-type-master');
+        if (!response.ok) throw new Error('Failed to fetch material types');
+        const result = await response.json();
+        if (result.success) {
+          setMaterialTypes(result.data);
+        }
+      } catch (error) {
+        console.error('Error fetching material types:', error);
+      }
+    };
+
+    fetchMaterialTypes();
+  }, []);
+
   // Handler to update is_active status
   const handleIsActiveChange = async (skuId: number, currentStatus: boolean) => {
     try {
       // Optimistically update UI
       setSkuData(prev => prev.map(sku => sku.id === skuId ? { ...sku, is_active: !currentStatus } : sku));
       // Send PATCH request
-      const token = await getAccessToken();
-      await fetch(`http://localhost:3000/sku-details/${skuId}/is-active`, {
+      const response = await fetch(`http://localhost:3000/sku-details/${skuId}/is-active`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ is_active: !currentStatus })
       });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error('API returned unsuccessful response for status update');
+      }
     } catch (err) {
       // If error, revert UI change
       setSkuData(prev => prev.map(sku => sku.id === skuId ? { ...sku, is_active: currentStatus } : sku));
@@ -305,11 +323,9 @@ const CmSkuDetail: React.FC = () => {
     // POST to API
     setAddSkuLoading(true);
     try {
-      const token = await getAccessToken();
       const response = await fetch('http://localhost:3000/sku-details/add', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -332,11 +348,9 @@ const CmSkuDetail: React.FC = () => {
       setAddSkuSuccess('SKU added successfully!');
       setAddSkuErrors({ sku: '', skuDescription: '', period: '', qty: '', server: '' });
       // Call audit log API
-      const auditToken = await getAccessToken();
-      await fetch('http://localhost:3000/sku-auditlog/add', {
+      const auditResponse = await fetch('http://localhost:3000/sku-auditlog/add', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${auditToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -349,6 +363,13 @@ const CmSkuDetail: React.FC = () => {
           created_date: new Date().toISOString()
         })
       });
+      if (!auditResponse.ok) {
+        throw new Error('Failed to add audit log');
+      }
+      const auditResult = await auditResponse.json();
+      if (!auditResult.success) {
+        throw new Error('API returned unsuccessful response for audit log');
+      }
       setTimeout(async () => {
         setShowSkuModal(false);
         setAddSku('');
@@ -414,11 +435,9 @@ const CmSkuDetail: React.FC = () => {
     // PUT to API
     setEditSkuLoading(true);
     try {
-      const token = await getAccessToken();
       const response = await fetch(`http://localhost:3000/sku-details/update/${encodeURIComponent(editSkuData.sku)}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -440,11 +459,9 @@ const CmSkuDetail: React.FC = () => {
       setEditSkuSuccess('SKU updated successfully!');
       setEditSkuErrors({ sku: '', skuDescription: '', period: '', qty: '', formulationReference: '', server: '' });
       // Call audit log API
-      const auditToken = await getAccessToken();
-      await fetch('http://localhost:3000/sku-auditlog/add', {
+      const auditResponse = await fetch('http://localhost:3000/sku-auditlog/add', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${auditToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -457,6 +474,13 @@ const CmSkuDetail: React.FC = () => {
           created_date: new Date().toISOString()
         })
       });
+      if (!auditResponse.ok) {
+        throw new Error('Failed to add audit log');
+      }
+      const auditResult = await auditResponse.json();
+      if (!auditResult.success) {
+        throw new Error('API returned unsuccessful response for audit log');
+      }
       setTimeout(async () => {
         setShowEditSkuModal(false);
         setEditSkuSuccess('');
@@ -546,11 +570,9 @@ const CmSkuDetail: React.FC = () => {
 
     // POST to API
     try {
-      const token = await getAccessToken();
       const response = await fetch('http://localhost:3000/sku-details/add', { // This endpoint is for SKU, not component
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -595,11 +617,9 @@ const CmSkuDetail: React.FC = () => {
       setAddComponentSuccess('Component added successfully!');
       setAddComponentErrors({}); // Clear errors on success
       // Call audit log API
-      const auditToken = await getAccessToken();
-      await fetch('http://localhost:3000/sku-auditlog/add', {
+      const auditResponse = await fetch('http://localhost:3000/sku-auditlog/add', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${auditToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -612,6 +632,13 @@ const CmSkuDetail: React.FC = () => {
           created_date: new Date().toISOString()
         })
       });
+      if (!auditResponse.ok) {
+        throw new Error('Failed to add audit log');
+      }
+      const auditResult = await auditResponse.json();
+      if (!auditResult.success) {
+        throw new Error('API returned unsuccessful response for audit log');
+      }
       setTimeout(async () => {
         setShowAddComponentModal(false);
         setAddComponentData({
@@ -651,6 +678,27 @@ const CmSkuDetail: React.FC = () => {
     }
   };
 
+  // Export to Excel handler
+  const handleExportToExcel = () => {
+    // Prepare data for export
+    const exportData = filteredSkuData.map(sku => ({
+      'SKU Code': sku.sku_code,
+      'SKU Description': sku.sku_description,
+      'Reference SKU': sku.sku_reference,
+      'Period': sku.period,
+      'Purchased Quantity': sku.purchased_quantity,
+      'Dual Source': sku.dual_source,
+      'Formulation Reference': sku.formulation_reference,
+      'Is Active': sku.is_active ? 'Active' : 'Inactive',
+      'Created By': sku.created_by,
+      'Created Date': sku.created_date
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'SKUs');
+    XLSX.writeFile(workbook, '3pm-detail-skus.xlsx');
+  };
+
   return (
     <Layout>
       {loading && <Loader />}
@@ -683,7 +731,7 @@ const CmSkuDetail: React.FC = () => {
         <div className="filters CMDetails">
           <div className="row">
             <div className="col-sm-12 ">
-              <ul>
+              <ul style={{ display: 'flex', alignItems: 'center' }}>
                 <li><strong>3PM Code: </strong> {cmCode}</li>
                 <li> | </li>
                 <li><strong>3PM Description: </strong> {cmDescription}</li>
@@ -705,6 +753,15 @@ const CmSkuDetail: React.FC = () => {
                 <li> | </li>
                 <li>
                   <strong>Total SKUs: </strong> {skuData.length}
+                </li>
+                <li style={{ marginLeft: 'auto' }}>
+                  <button
+                    className="btnCommon btnGreen"
+                    style={{ minWidth: 180, fontWeight: 600 }}
+                    onClick={() => window.open('/sedforapproval', '_blank')}
+                  >
+                    Send For Approval <i className="ri-send-plane-2-line"></i>
+                  </button>
                 </li>
               </ul>
             </div>
@@ -749,13 +806,20 @@ const CmSkuDetail: React.FC = () => {
                     <i className="ri-refresh-line"></i>
                   </button>
                 </li>
-                <li style={{ marginLeft: 'auto' }}>
+                <li style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
                   <button
                     className="add-sku-btn"
                     style={{ backgroundColor: '#30ea03', color: '#000', marginBottom: 0, float: 'right', minWidth: 120 }}
                     onClick={() => setShowSkuModal(true)}
                   >
                     Add SKU <i className="ri-add-circle-line"></i>
+                  </button>
+                  <button
+                    className="btnCommon btnGreen"
+                    style={{ minWidth: 120 }}
+                    onClick={handleExportToExcel}
+                  >
+                    Export to Excel <i className="ri-file-excel-2-line"></i>
                   </button>
                 </li>
               </ul>
@@ -1196,7 +1260,7 @@ const CmSkuDetail: React.FC = () => {
             <div className="row g-3">
               {/* Component Type (Drop-down list) */}
               <div className="col-md-6">
-                <label>Component Type</label>
+                <label>Component Type <InfoIcon info="Select the type of component (e.g., Plastic, Metal, etc.)." /></label>
                 <select className="form-control select-with-icon">
                   <option value="">Select Type</option>
                   <option value="Type1">Type 1</option>
@@ -1205,31 +1269,31 @@ const CmSkuDetail: React.FC = () => {
               </div>
               {/* Component Code (Free text) */}
               <div className="col-md-6">
-                <label>Component Code</label>
+                <label>Component Code <InfoIcon info="Enter the unique code for this component." /></label>
                 <input type="text" className="form-control" value={addComponentData.componentCode} onChange={e => setAddComponentData({ ...addComponentData, componentCode: e.target.value })} />
                 {addComponentErrors.componentCode && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.componentCode}</div>}
               </div>
               {/* Component Description (Free text) */}
               <div className="col-md-6">
-                <label>Component Description</label>
+                <label>Component Description <InfoIcon info="Describe the component in detail." /></label>
                 <input type="text" className="form-control" value={addComponentData.componentDescription} onChange={e => setAddComponentData({ ...addComponentData, componentDescription: e.target.value })} />
                 {addComponentErrors.componentDescription && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.componentDescription}</div>}
               </div>
               {/* Component validity date - From (Date) */}
               <div className="col-md-6">
-                <label>Component validity date - From</label>
+                <label>Component validity date - From <InfoIcon info="Select the start date for this component's validity." /></label>
                 <input type="date" className="form-control" value={addComponentData.validityFrom} onChange={e => setAddComponentData({ ...addComponentData, validityFrom: e.target.value })} />
                 {addComponentErrors.validityFrom && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.validityFrom}</div>}
               </div>
               {/* Component validity date - To (Date) */}
               <div className="col-md-6">
-                <label>Component validity date - To</label>
+                <label>Component validity date - To <InfoIcon info="Select the end date for this component's validity." /></label>
                 <input type="date" className="form-control" value={addComponentData.validityTo} onChange={e => setAddComponentData({ ...addComponentData, validityTo: e.target.value })} />
                 {addComponentErrors.validityTo && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.validityTo}</div>}
               </div>
               {/* Component Category (Drop-down list) */}
               <div className="col-md-6">
-                <label>Component Category</label>
+                <label>Component Category <InfoIcon info="Select the category for this component." /></label>
                 <select className="form-control select-with-icon">
                   <option value="">Select Category</option>
                   <option value="Cat1">Category 1</option>
@@ -1238,13 +1302,13 @@ const CmSkuDetail: React.FC = () => {
               </div>
               {/* Component Quantity (Numeric) */}
               <div className="col-md-6">
-                <label>Component Quantity</label>
+                <label>Component Quantity <InfoIcon info="Enter the quantity of this component used." /></label>
                 <input type="number" className="form-control" value={addComponentData.componentQuantity} onChange={e => setAddComponentData({ ...addComponentData, componentQuantity: e.target.value })} />
                 {addComponentErrors.componentQuantity && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.componentQuantity}</div>}
               </div>
               {/* Component Unit of Measure (Drop-down list) */}
               <div className="col-md-6">
-                <label>Component Unit of Measure</label>
+                <label>Component Unit of Measure <InfoIcon info="Select the unit of measure for the component quantity (e.g., PCS, KG)." /></label>
                 <select className="form-control select-with-icon">
                   <option value="">Select UoM</option>
                   <option value="UOM1">UOM 1</option>
@@ -1253,34 +1317,42 @@ const CmSkuDetail: React.FC = () => {
               </div>
               {/* Component Base Quantity (Numeric) */}
               <div className="col-md-6">
-                <label>Component Base Quantity</label>
+                <label>Component Base Quantity <InfoIcon info="Enter the base quantity for this component (reference amount)." /></label>
                 <input type="number" className="form-control" value={addComponentData.componentBaseQuantity} onChange={e => setAddComponentData({ ...addComponentData, componentBaseQuantity: e.target.value })} />
                 {addComponentErrors.componentBaseQuantity && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.componentBaseQuantity}</div>}
               </div>
               {/* Component Base Unit of Measure (Default to Each) */}
               <div className="col-md-6">
-                <label>Component Base Unit of Measure</label>
+                <label>Component Base Unit of Measure <InfoIcon info="Specify the unit for the base quantity (e.g., Each, PCS)." /></label>
                 <input type="text" className="form-control" value={addComponentData.componentBaseUnitOfMeasure} onChange={e => setAddComponentData({ ...addComponentData, componentBaseUnitOfMeasure: e.target.value })} placeholder="Each" />
                 {addComponentErrors.componentBaseUnitOfMeasure && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.componentBaseUnitOfMeasure}</div>}
               </div>
               {/* %w/w (Percentage) */}
               <div className="col-md-6">
-                <label>%w/w</label>
+                <label>%w/w <InfoIcon info="Enter the percentage by weight/weight for this component." /></label>
                 <input type="number" className="form-control" value={addComponentData.wW} onChange={e => setAddComponentData({ ...addComponentData, wW: e.target.value })} placeholder="Percentage" />
                 {addComponentErrors.wW && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.wW}</div>}
               </div>
               {/* Component Packaging Type (Drop-down list) */}
               <div className="col-md-6">
-                <label>Component Packaging Type</label>
-                <select className="form-control select-with-icon">
+                <label>Component Packaging Type <InfoIcon info="Select the type of packaging for this component." /></label>
+                <select 
+                  className="form-control select-with-icon"
+                  value={addComponentData.componentPackagingType}
+                  onChange={e => setAddComponentData({ ...addComponentData, componentPackagingType: e.target.value })}
+                >
                   <option value="">Select Packaging Type</option>
-                  <option value="Type1">Type 1</option>
-                  <option value="Type2">Type 2</option>
+                  {materialTypes.map(type => (
+                    <option key={type.id} value={type.item_name}>
+                      {type.item_name}
+                    </option>
+                  ))}
                 </select>
+                {addComponentErrors.componentPackagingType && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.componentPackagingType}</div>}
               </div>
               {/* Component Packaging Material (Drop-down list) */}
               <div className="col-md-6">
-                <label>Component Packaging Material</label>
+                <label>Component Packaging Material <InfoIcon info="Select the material used for packaging this component." /></label>
                 <select className="form-control select-with-icon">
                   <option value="">Select Packaging Material</option>
                   <option value="Material1">Material 1</option>
@@ -1289,13 +1361,13 @@ const CmSkuDetail: React.FC = () => {
               </div>
               {/* Component Unit Weight (Numeric) */}
               <div className="col-md-6">
-                <label>Component Unit Weight</label>
+                <label>Component Unit Weight <InfoIcon info="Enter the weight of a single unit of this component." /></label>
                 <input type="number" className="form-control" value={addComponentData.componentUnitWeight} onChange={e => setAddComponentData({ ...addComponentData, componentUnitWeight: e.target.value })} />
                 {addComponentErrors.componentUnitWeight && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.componentUnitWeight}</div>}
               </div>
               {/* Component Weight Unit of Measure (Drop-down list) */}
               <div className="col-md-6">
-                <label>Component Weight Unit of Measure</label>
+                <label>Component Weight Unit of Measure <InfoIcon info="Select the unit of measure for the component's weight (e.g., g, kg)." /></label>
                 <select className="form-control select-with-icon">
                   <option value="">Select Weight UoM</option>
                   <option value="g">g</option>
@@ -1304,43 +1376,43 @@ const CmSkuDetail: React.FC = () => {
               </div>
               {/* % Mechanical Post-Consumer Recycled Content (inc. Chemical) (Percentage) */}
               <div className="col-md-6">
-                <label>% Mechanical Post-Consumer Recycled Content (inc. Chemical)</label>
+                <label>% Mechanical Post-Consumer Recycled Content (inc. Chemical) <InfoIcon info="Enter the percentage of post-consumer recycled content, including chemical recycling." /></label>
                 <input type="number" className="form-control" value={addComponentData.percentPostConsumer} onChange={e => setAddComponentData({ ...addComponentData, percentPostConsumer: e.target.value })} placeholder="Percentage" />
                 {addComponentErrors.percentPostConsumer && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.percentPostConsumer}</div>}
               </div>
               {/* % Mechanical Post-Industrial Recycled Content (Percentage) */}
               <div className="col-md-6">
-                <label>% Mechanical Post-Industrial Recycled Content</label>
+                <label>% Mechanical Post-Industrial Recycled Content <InfoIcon info="Enter the percentage of post-industrial recycled content." /></label>
                 <input type="number" className="form-control" value={addComponentData.percentPostIndustrial} onChange={e => setAddComponentData({ ...addComponentData, percentPostIndustrial: e.target.value })} placeholder="Percentage" />
                 {addComponentErrors.percentPostIndustrial && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.percentPostIndustrial}</div>}
               </div>
               {/* % Chemical Recycled Content (Percentage) */}
               <div className="col-md-6">
-                <label>% Chemical Recycled Content</label>
+                <label>% Chemical Recycled Content <InfoIcon info="Enter the percentage of chemically recycled content." /></label>
                 <input type="number" className="form-control" value={addComponentData.percentChemical} onChange={e => setAddComponentData({ ...addComponentData, percentChemical: e.target.value })} placeholder="Percentage" />
                 {addComponentErrors.percentChemical && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.percentChemical}</div>}
               </div>
               {/* % Bio-sourced? (Percentage) */}
               <div className="col-md-6">
-                <label>% Bio-sourced?</label>
+                <label>% Bio-sourced? <InfoIcon info="Enter the percentage of bio-sourced material in this component." /></label>
                 <input type="number" className="form-control" value={addComponentData.percentBioSourced} onChange={e => setAddComponentData({ ...addComponentData, percentBioSourced: e.target.value })} placeholder="Percentage" />
                 {addComponentErrors.percentBioSourced && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.percentBioSourced}</div>}
               </div>
               {/* Material structure - multimaterials only (with % wt) (Free text) */}
               <div className="col-md-6">
-                <label>Material structure - multimaterials only (with % wt)</label>
+                <label>Material structure - multimaterials only (with % wt) <InfoIcon info="Describe the material structure, including percentages by weight if multimaterial." /></label>
                 <input type="text" className="form-control" value={addComponentData.materialStructure} onChange={e => setAddComponentData({ ...addComponentData, materialStructure: e.target.value })} />
                 {addComponentErrors.materialStructure && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.materialStructure}</div>}
               </div>
               {/* Component packaging colour / opacity (Free text) */}
               <div className="col-md-6">
-                <label>Component packaging colour / opacity</label>
+                <label>Component packaging colour / opacity <InfoIcon info="Specify the color or opacity of the packaging." /></label>
                 <input type="text" className="form-control" value={addComponentData.packagingColour} onChange={e => setAddComponentData({ ...addComponentData, packagingColour: e.target.value })} />
                 {addComponentErrors.packagingColour && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.packagingColour}</div>}
               </div>
               {/* Component packaging level (Drop-down list) */}
               <div className="col-md-6">
-                <label>Component packaging level</label>
+                <label>Component packaging level <InfoIcon info="Select the packaging level for this component (e.g., primary, secondary)." /></label>
                 <select className="form-control select-with-icon">
                   <option value="">Select Packaging Level</option>
                   <option value="Level1">Level 1</option>
@@ -1349,7 +1421,7 @@ const CmSkuDetail: React.FC = () => {
               </div>
               {/* Component dimensions (3D - LxWxH, 2D - LxW) (Free text) */}
               <div className="col-md-6">
-                <label>Component dimensions (3D - LxWxH, 2D - LxW)</label>
+                <label>Component dimensions (3D - LxWxH, 2D - LxW) <InfoIcon info="Enter the dimensions of the component (e.g., 10x5x2 cm)." /></label>
                 <input type="text" className="form-control" value={addComponentData.componentDimensions} onChange={e => setAddComponentData({ ...addComponentData, componentDimensions: e.target.value })} />
                 {addComponentErrors.componentDimensions && <div style={{ color: 'red', fontSize: 13 }}>{addComponentErrors.componentDimensions}</div>}
               </div>
@@ -1357,7 +1429,7 @@ const CmSkuDetail: React.FC = () => {
           </div>
         </div>
               <div className="col-12" style={{ marginTop: 24 }}>
-  <h5 style={{ fontWeight: 700, color: '#000', marginBottom: 12, display: 'inline-block' }}>Upload Evidence</h5>
+  <h5 style={{ fontWeight: 700, color: '#000', marginBottom: 12, display: 'inline-block' }}>Upload Evidence <InfoIcon info="Upload supporting documents or images for this component. You can select files for each evidence category." /></h5>
   <input
     type="checkbox"
     id="select-for-all-checkbox"
@@ -1372,11 +1444,11 @@ const CmSkuDetail: React.FC = () => {
     }}
     style={{ marginLeft: 16, verticalAlign: 'middle' }}
   />
-  <label htmlFor="select-for-all-checkbox" style={{ marginLeft: 8, fontWeight: 500, color: '#000' }}>Select for All</label>
+  <label htmlFor="select-for-all-checkbox" style={{ marginLeft: 8, fontWeight: 500, color: '#000' }}>Select for All <InfoIcon info="Check this to use the same files for all evidence categories." /></label>
   <div className="row g-3" style={{ marginTop: 8 }}>
     {[1,2,3,4].map(idx => (
       <div className="col-md-6" key={idx} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <label style={{ marginBottom: 0, minWidth: 160 }}>{`Evidence Category ${idx}`}</label>
+        <label style={{ marginBottom: 0, minWidth: 160 }}>{`Evidence Category ${idx}`} <InfoIcon info={`Upload files for Evidence Category ${idx}.`} /></label>
         <input
           type="file"
           className="form-control"
